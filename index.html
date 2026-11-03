@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Indian Hand Gesture Recognition</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#080d19;color:white;min-height:100vh;padding:30px 15px}
+header{text-align:center;margin-bottom:30px}
+header h1{font-size:34px;color:#65e6c1;margin:12px}
+header p{color:#aab5c8}
+.container{max-width:1100px;margin:auto;display:grid;grid-template-columns:1.7fr 1fr;gap:20px}
+.panel{background:#121c30;border:1px solid #293851;border-radius:16px;padding:20px}
+.camera{position:relative;width:100%;aspect-ratio:4/3;background:black;overflow:hidden;border-radius:12px}
+video,canvas{position:absolute;width:100%;height:100%;inset:0;object-fit:cover;transform:scaleX(-1)}
+canvas{pointer-events:none}
+.buttons{display:flex;gap:12px;margin-top:18px}
+button{padding:13px 20px;border:0;border-radius:8px;cursor:pointer;font-weight:bold;background:#65e6c1;color:#07140f}
+button.stop{background:#35445f;color:white}
+button:disabled{opacity:.4;cursor:not-allowed}
+.status{margin-top:15px;color:#aab5c8;font-size:13px}
+.heading{color:#aab5c8;font-size:13px;letter-spacing:2px}
+.gesture{font-size:34px;font-weight:bold;color:#65e6c1;margin:15px 0 25px;overflow-wrap:anywhere}
+.metric{display:flex;justify-content:space-between;padding:15px 0;border-top:1px solid #293851;color:#aab5c8}
+.metric strong{color:white}
+.info{margin-top:25px;color:#aab5c8;line-height:1.6;font-size:13px}
+@media(max-width:750px){.container{grid-template-columns:1fr}header h1{font-size:25px}}
+</style>
+</head>
+<body>
+<header>
+<h1>Indian Hand Gesture Recognition</h1>
+<p>AI Powered Real-Time Hand Gesture Detection</p>
+</header>
+<div class="container">
+<section class="panel">
+<div class="camera">
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+</div>
+<div class="buttons">
+<button id="start">Start Camera</button>
+<button id="stop" class="stop" disabled>Stop Camera</button>
+</div>
+<div class="status" id="status">Click Start Camera to begin.</div>
+</section>
+<section class="panel">
+<div class="heading">DETECTED GESTURE</div>
+<div class="gesture" id="gesture">WAITING</div>
+<div class="metric"><span>Confidence</span><strong id="confidence">—</strong></div>
+<div class="metric"><span>Hands Detected</span><strong id="hands">0</strong></div>
+<div class="metric"><span>Recognition Mode</span><strong id="source">—</strong></div>
+<div class="info">Keep your hand inside the camera frame. Show one or two hands clearly for gesture recognition. Allow camera permission when your browser asks.</div>
+</section>
+</div>
+<script>
+const video=document.getElementById("video");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const startBtn=document.getElementById("start");
+const stopBtn=document.getElementById("stop");
+const statusText=document.getElementById("status");
+let stream=null,timer=null,busy=false;
+const connections=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+function drawLandmarks(allHands){
+ctx.clearRect(0,0,canvas.width,canvas.height);
+const w=canvas.width,h=canvas.height;
+for(const hand of allHands){
+ctx.strokeStyle="#ffffff";ctx.fillStyle="#00e5a0";ctx.lineWidth=3;
+for(const [a,b] of connections){
+ctx.beginPath();ctx.moveTo(hand[a][0]*w,hand[a][1]*h);ctx.lineTo(hand[b][0]*w,hand[b][1]*h);ctx.stroke();
+}
+hand.forEach((point,i)=>{
+ctx.beginPath();ctx.arc(point[0]*w,point[1]*h,5,0,Math.PI*2);ctx.fill();
+ctx.fillStyle="#ffe66d";ctx.font="11px Arial";ctx.fillText(i,point[0]*w+7,point[1]*h-7);ctx.fillStyle="#00e5a0";
+});
+}
+}
+async function analyseFrame(){
+if(!stream||busy||video.readyState<2)return;
+busy=true;
+try{
+const temp=document.createElement("canvas");temp.width=640;temp.height=480;
+temp.getContext("2d").drawImage(video,0,0,640,480);
+const image=temp.toDataURL("image/jpeg",0.72);
+const response=await fetch("/predict",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image})});
+const data=await response.json();
+if(!response.ok)throw new Error(data.error||"Prediction failed");
+document.getElementById("gesture").textContent=data.label||"UNKNOWN";
+document.getElementById("confidence").textContent=(data.confidence??0)+"%";
+document.getElementById("hands").textContent=data.hands??0;
+document.getElementById("source").textContent=data.source||"—";
+drawLandmarks(data.landmarks||[]);
+}catch(error){statusText.textContent="Recognition error: "+error.message;}
+finally{busy=false;}
+}
+async function startCamera(){
+try{
+if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error("Camera requires HTTPS or localhost.");
+stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:640},height:{ideal:480}},audio:false});
+video.srcObject=stream;await video.play();canvas.width=640;canvas.height=480;
+startBtn.disabled=true;stopBtn.disabled=false;statusText.textContent="Camera active. Show your hand.";
+timer=setInterval(analyseFrame,180);
+}catch(error){statusText.textContent="Camera error: "+error.message;}
+}
+function stopCamera(){
+if(timer)clearInterval(timer);timer=null;
+if(stream)stream.getTracks().forEach(track=>track.stop());stream=null;video.srcObject=null;
+ctx.clearRect(0,0,canvas.width,canvas.height);
+startBtn.disabled=false;stopBtn.disabled=true;
+document.getElementById("gesture").textContent="WAITING";
+document.getElementById("confidence").textContent="—";
+document.getElementById("hands").textContent="0";
+document.getElementById("source").textContent="—";
+statusText.textContent="Camera stopped.";
+}
+startBtn.addEventListener("click",startCamera);
+stopBtn.addEventListener("click",stopCamera);
+window.addEventListener("beforeunload",stopCamera);
+</script>
+</body>
+</html>
